@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	kubebatchclient "github.com/kubernetes-sigs/kube-batch/pkg/client/clientset/versioned"
 	"k8s.io/api/core/v1"
 	kubeinformers "k8s.io/client-go/informers"
 	kubeclientset "k8s.io/client-go/kubernetes"
@@ -32,7 +33,7 @@ import (
 	tfv1beta1 "github.com/kubeflow/tf-operator/pkg/apis/tensorflow/v1beta1"
 	tfjobclientset "github.com/kubeflow/tf-operator/pkg/client/clientset/versioned"
 	tfjobinformers "github.com/kubeflow/tf-operator/pkg/client/informers/externalversions"
-	"github.com/kubeflow/tf-operator/pkg/common/util/testutil"
+	"github.com/kubeflow/tf-operator/pkg/common/util/v1beta1/testutil"
 	"github.com/kubeflow/tf-operator/pkg/control"
 	"k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,6 +49,7 @@ var (
 func newTFController(
 	config *rest.Config,
 	kubeClientSet kubeclientset.Interface,
+	kubeBatchClientSet kubebatchclient.Interface,
 	tfJobClientSet tfjobclientset.Interface,
 	resyncPeriod controller.ResyncPeriodFunc,
 	option options.ServerOption,
@@ -60,7 +62,7 @@ func newTFController(
 
 	tfJobInformer := NewUnstructuredTFJobInformer(config, metav1.NamespaceAll)
 
-	ctr := NewTFController(tfJobInformer, kubeClientSet, tfJobClientSet, kubeInformerFactory, tfJobInformerFactory, option)
+	ctr := NewTFController(tfJobInformer, kubeClientSet, kubeBatchClientSet, tfJobClientSet, kubeInformerFactory, tfJobInformerFactory, option)
 	ctr.PodControl = &controller.FakePodControl{}
 	ctr.ServiceControl = &control.FakeServiceControl{}
 	return ctr, kubeInformerFactory, tfJobInformerFactory
@@ -215,6 +217,16 @@ func TestNormalPath(t *testing.T) {
 			},
 		},
 		)
+
+		// Prepare the kube-batch clientset and controller for the test.
+		kubeBatchClientSet := kubebatchclient.NewForConfigOrDie(&rest.Config{
+			Host: "",
+			ContentConfig: rest.ContentConfig{
+				GroupVersion: &v1.SchemeGroupVersion,
+			},
+		},
+		)
+
 		config := &rest.Config{
 			Host: "",
 			ContentConfig: rest.ContentConfig{
@@ -223,7 +235,7 @@ func TestNormalPath(t *testing.T) {
 		}
 		option := options.ServerOption{}
 		tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-		ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, option)
+		ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, kubeBatchClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, option)
 		ctr.tfJobInformerSynced = testutil.AlwaysReady
 		ctr.PodInformerSynced = testutil.AlwaysReady
 		ctr.ServiceInformerSynced = testutil.AlwaysReady
@@ -358,6 +370,16 @@ func TestRun(t *testing.T) {
 		},
 	},
 	)
+
+	// Prepare the kube-batch clientset and controller for the test.
+	kubeBatchClientSet := kubebatchclient.NewForConfigOrDie(&rest.Config{
+		Host: "",
+		ContentConfig: rest.ContentConfig{
+			GroupVersion: &v1.SchemeGroupVersion,
+		},
+	},
+	)
+
 	config := &rest.Config{
 		Host: "",
 		ContentConfig: rest.ContentConfig{
@@ -365,7 +387,7 @@ func TestRun(t *testing.T) {
 		},
 	}
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-	ctr, _, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+	ctr, _, _ := newTFController(config, kubeClientSet, kubeBatchClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 	ctr.tfJobInformerSynced = testutil.AlwaysReady
 	ctr.PodInformerSynced = testutil.AlwaysReady
 	ctr.ServiceInformerSynced = testutil.AlwaysReady
@@ -391,19 +413,29 @@ func TestSyncPdb(t *testing.T) {
 			GroupVersion: &tfv1beta1.SchemeGroupVersion,
 		},
 	}
+
+	kubeBatchClientSet := kubebatchclient.NewForConfigOrDie(&rest.Config{
+		Host: "",
+		ContentConfig: rest.ContentConfig{
+			GroupVersion: &v1.SchemeGroupVersion,
+		},
+	},
+	)
+
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
 	kubeClientSet := fake.NewSimpleClientset()
+
 	option := options.ServerOption{
 		EnableGangScheduling: true,
 	}
-	ctr, _, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, option)
+	ctr, _, _ := newTFController(config, kubeClientSet, kubeBatchClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, option)
 
 	type testCase struct {
 		tfJob     *tfv1beta1.TFJob
 		expectPdb *v1beta1.PodDisruptionBudget
 	}
 
-	minAvailable2 := intstr.FromInt(2)
+	minAvailable := intstr.FromInt(1)
 	testCases := []testCase{
 		{
 			tfJob: &tfv1beta1.TFJob{
@@ -418,27 +450,12 @@ func TestSyncPdb(t *testing.T) {
 					},
 				},
 			},
-			expectPdb: nil,
-		},
-		{
-			tfJob: &tfv1beta1.TFJob{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-sync-pdb",
-				},
-				Spec: tfv1beta1.TFJobSpec{
-					TFReplicaSpecs: map[tfv1beta1.TFReplicaType]*common.ReplicaSpec{
-						tfv1beta1.TFReplicaTypeWorker: &common.ReplicaSpec{
-							Replicas: proto.Int32(2),
-						},
-					},
-				},
-			},
 			expectPdb: &v1beta1.PodDisruptionBudget{
 				Spec: v1beta1.PodDisruptionBudgetSpec{
-					MinAvailable: &minAvailable2,
+					MinAvailable: &minAvailable,
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
-							"tf_job_name": "test-sync-pdb",
+							"tf-job-name": "test-sync-pdb",
 						},
 					},
 				},

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	kubebatchclient "github.com/kubernetes-sigs/kube-batch/pkg/client/clientset/versioned"
 	log "github.com/sirupsen/logrus"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,8 +35,8 @@ import (
 	tfjobclientset "github.com/kubeflow/tf-operator/pkg/client/clientset/versioned"
 	tfjobscheme "github.com/kubeflow/tf-operator/pkg/client/clientset/versioned/scheme"
 	tfjobinformers "github.com/kubeflow/tf-operator/pkg/client/informers/externalversions"
-	tfjobinformersv1beta1 "github.com/kubeflow/tf-operator/pkg/client/informers/externalversions/kubeflow/v1beta1"
-	tfjoblisters "github.com/kubeflow/tf-operator/pkg/client/listers/kubeflow/v1beta1"
+	tfjobinformersv1beta1 "github.com/kubeflow/tf-operator/pkg/client/informers/externalversions/tensorflow/v1beta1"
+	tfjoblisters "github.com/kubeflow/tf-operator/pkg/client/listers/tensorflow/v1beta1"
 	"github.com/kubeflow/tf-operator/pkg/common/jobcontroller"
 	tflogger "github.com/kubeflow/tf-operator/pkg/logger"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -47,8 +48,9 @@ const (
 	// labels for pods and servers.
 	tfReplicaTypeLabel  = "tf-replica-type"
 	tfReplicaIndexLabel = "tf-replica-index"
-	labelGroupName      = "group_name"
-	labelTFJobName      = "tf_job_name"
+	labelGroupName      = "group-name"
+	labelTFJobName      = "tf-job-name"
+	labelTFJobRole      = "tf-job-role"
 )
 
 var (
@@ -97,6 +99,7 @@ func NewTFController(
 	// This variable is for unstructured informer.
 	tfJobInformer tfjobinformersv1beta1.TFJobInformer,
 	kubeClientSet kubeclientset.Interface,
+	kubeBatchClientSet kubebatchclient.Interface,
 	tfJobClientSet tfjobclientset.Interface,
 	kubeInformerFactory kubeinformers.SharedInformerFactory,
 	// This field is not used now but we keep it since it will be used
@@ -115,7 +118,7 @@ func NewTFController(
 	// Create base controller
 	log.Info("Creating Job controller")
 	jc := jobcontroller.NewJobController(tc, metav1.Duration{Duration: 15 * time.Second},
-		option.EnableGangScheduling, kubeClientSet, kubeInformerFactory, tfv1beta1.Plural)
+		option.EnableGangScheduling, kubeClientSet, kubeBatchClientSet, kubeInformerFactory, tfv1beta1.Plural)
 	tc.JobController = jc
 	// Set sync handler.
 	tc.syncHandler = tc.syncTFJob
@@ -177,18 +180,11 @@ func (tc *TFController) Run(threadiness int, stopCh <-chan struct{}) error {
 
 	// Wait for the caches to be synced before starting workers.
 	log.Info("Waiting for informer caches to sync")
-	if ok := cache.WaitForCacheSync(stopCh, tc.tfJobInformerSynced); !ok {
-		return fmt.Errorf("failed to wait for tfjob caches to sync")
-	}
 
-	if ok := cache.WaitForCacheSync(stopCh, tc.PodInformerSynced); !ok {
-		return fmt.Errorf("failed to wait for pod caches to sync")
+	if ok := cache.WaitForCacheSync(stopCh, tc.tfJobInformerSynced,
+		tc.PodInformerSynced, tc.ServiceInformerSynced); !ok {
+		return fmt.Errorf("failed to wait for caches to sync")
 	}
-
-	if ok := cache.WaitForCacheSync(stopCh, tc.ServiceInformerSynced); !ok {
-		return fmt.Errorf("failed to wait for service caches to sync")
-	}
-
 	log.Infof("Starting %v workers", threadiness)
 	// Launch workers to process TFJob resources.
 	for i := 0; i < threadiness; i++ {
@@ -213,15 +209,25 @@ func (tc *TFController) runWorker() {
 // processNextWorkItem will read a single work item off the workqueue and
 // attempt to process it, by calling the syncHandler.
 func (tc *TFController) processNextWorkItem() bool {
-	key, quit := tc.WorkQueue.Get()
+	obj, quit := tc.WorkQueue.Get()
 	if quit {
 		return false
 	}
-	defer tc.WorkQueue.Done(key)
+	defer tc.WorkQueue.Done(obj)
 
-	logger := tflogger.LoggerForKey(key.(string))
+	var key string
+	var ok bool
+	if key, ok = obj.(string); !ok {
+		// As the item in the workqueue is actually invalid, we call
+		// Forget here else we'd go into a loop of attempting to
+		// process a work item that is invalid.
+		tc.WorkQueue.Forget(obj)
+		utilruntime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+		return true
+	}
+	logger := tflogger.LoggerForKey(key)
 
-	tfJob, err := tc.getTFJobFromKey(key.(string))
+	tfJob, err := tc.getTFJobFromKey(key)
 	if err != nil {
 		if err == errNotExists {
 			logger.Infof("TFJob has been deleted: %v", key)
@@ -240,7 +246,7 @@ func (tc *TFController) processNextWorkItem() bool {
 	}
 
 	// Sync TFJob to match the actual state to this desired state.
-	forget, err := tc.syncHandler(key.(string))
+	forget, err := tc.syncHandler(key)
 	if err == nil {
 		if forget {
 			tc.WorkQueue.Forget(key)
@@ -248,7 +254,7 @@ func (tc *TFController) processNextWorkItem() bool {
 		return true
 	}
 
-	utilruntime.HandleError(fmt.Errorf("Error syncing tfjob: %v", err))
+	utilruntime.HandleError(fmt.Errorf("error syncing tfjob: %v", err))
 	tc.WorkQueue.AddRateLimited(key)
 
 	return true
@@ -257,7 +263,7 @@ func (tc *TFController) processNextWorkItem() bool {
 func (tc *TFController) enqueueTFJob(tfjob interface{}) {
 	key, err := KeyFunc(tfjob)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for tfjob object %#v: %v", tfjob, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for tfjob object %#v: %v", tfjob, err))
 		return
 	}
 
@@ -368,11 +374,14 @@ func (tc *TFController) reconcileTFJobs(tfjob *tfv1beta1.TFJob) error {
 			}
 		}
 
-		// Initialize the status.
-		initializeTFReplicaStatuses(tfjob, tfv1beta1.TFReplicaTypeWorker)
-		initializeTFReplicaStatuses(tfjob, tfv1beta1.TFReplicaTypePS)
-		initializeTFReplicaStatuses(tfjob, tfv1beta1.TFReplicaTypeChief)
-		initializeTFReplicaStatuses(tfjob, tfv1beta1.TFReplicaTypeMaster)
+		// At this point the pods may have been deleted, so if the job succeeded, we need to manually set the replica status.
+		// If any replicas are still Active, set their status to succeeded.
+		if isSucceeded(tfjob.Status) {
+			for rtype := range tfjob.Status.ReplicaStatuses {
+				tfjob.Status.ReplicaStatuses[rtype].Succeeded += tfjob.Status.ReplicaStatuses[rtype].Active
+				tfjob.Status.ReplicaStatuses[rtype].Active = 0
+			}
+		}
 		return tc.updateStatusHandler(tfjob)
 	}
 
@@ -406,7 +415,7 @@ func (tc *TFController) satisfiedExpectations(tfjob *tfv1beta1.TFJob) bool {
 	satisfied := false
 	tfjobKey, err := KeyFunc(tfjob)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for tfjob object %#v: %v", tfjob, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for tfjob object %#v: %v", tfjob, err))
 		return false
 	}
 
@@ -457,6 +466,10 @@ func (tc *TFController) GetReplicaTypeLabelKey() string {
 
 func (tc *TFController) GetReplicaIndexLabelKey() string {
 	return tfReplicaIndexLabel
+}
+
+func (tc *TFController) GetJobRoleKey() string {
+	return labelTFJobRole
 }
 
 func (tc *TFController) ControllerName() string {

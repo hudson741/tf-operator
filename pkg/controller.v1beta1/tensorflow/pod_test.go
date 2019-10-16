@@ -16,8 +16,10 @@
 package tensorflow
 
 import (
+	"os"
 	"testing"
 
+	kubebatchclient "github.com/kubernetes-sigs/kube-batch/pkg/client/clientset/versioned"
 	"k8s.io/api/core/v1"
 	kubeclientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -27,7 +29,7 @@ import (
 	common "github.com/kubeflow/tf-operator/pkg/apis/common/v1beta1"
 	tfv1beta1 "github.com/kubeflow/tf-operator/pkg/apis/tensorflow/v1beta1"
 	tfjobclientset "github.com/kubeflow/tf-operator/pkg/client/clientset/versioned"
-	"github.com/kubeflow/tf-operator/pkg/common/util/testutil"
+	"github.com/kubeflow/tf-operator/pkg/common/util/v1beta1/testutil"
 )
 
 func TestAddPod(t *testing.T) {
@@ -39,6 +41,16 @@ func TestAddPod(t *testing.T) {
 		},
 	},
 	)
+
+	// Prepare the kube-batch clientset and controller for the test.
+	kubeBatchClientSet := kubebatchclient.NewForConfigOrDie(&rest.Config{
+		Host: "",
+		ContentConfig: rest.ContentConfig{
+			GroupVersion: &v1.SchemeGroupVersion,
+		},
+	},
+	)
+
 	config := &rest.Config{
 		Host: "",
 		ContentConfig: rest.ContentConfig{
@@ -46,7 +58,7 @@ func TestAddPod(t *testing.T) {
 		},
 	}
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-	ctr, _, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+	ctr, _, _ := newTFController(config, kubeClientSet, kubeBatchClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 	ctr.tfJobInformerSynced = testutil.AlwaysReady
 	ctr.PodInformerSynced = testutil.AlwaysReady
 	ctr.ServiceInformerSynced = testutil.AlwaysReady
@@ -90,34 +102,47 @@ func TestClusterSpec(t *testing.T) {
 		tfJob               *tfv1beta1.TFJob
 		rt                  string
 		index               string
+		customClusterDomain string
 		expectedClusterSpec string
 	}
 	testCase := []tc{
 		tc{
-			tfJob: testutil.NewTFJob(1, 0),
-			rt:    "worker",
-			index: "0",
+			tfJob:               testutil.NewTFJobWithNamespace(1, 0, "ns0"),
+			rt:                  "worker",
+			index:               "0",
+			customClusterDomain: "",
 			expectedClusterSpec: `{"cluster":{"worker":["` + testutil.TestTFJobName +
-				`-worker-0:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
+				`-worker-0.ns0.svc:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
 		},
 		tc{
-			tfJob: testutil.NewTFJob(1, 1),
-			rt:    "worker",
-			index: "0",
-			expectedClusterSpec: `{"cluster":{"ps":["` + testutil.TestTFJobName +
-				`-ps-0:2222"],"worker":["` + testutil.TestTFJobName +
-				`-worker-0:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
+			tfJob:               testutil.NewTFJobWithNamespace(1, 0, "ns1"),
+			rt:                  "worker",
+			index:               "0",
+			customClusterDomain: "tf.training.com",
+			expectedClusterSpec: `{"cluster":{"worker":["` + testutil.TestTFJobName +
+				`-worker-0.ns1.svc.tf.training.com:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
 		},
 		tc{
-			tfJob: testutil.NewTFJobWithEvaluator(1, 1, 1),
-			rt:    "worker",
-			index: "0",
+			tfJob:               testutil.NewTFJobWithNamespace(1, 1, "ns2"),
+			rt:                  "worker",
+			index:               "0",
+			customClusterDomain: "tf.training.org",
 			expectedClusterSpec: `{"cluster":{"ps":["` + testutil.TestTFJobName +
-				`-ps-0:2222"],"worker":["` + testutil.TestTFJobName +
-				`-worker-0:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
+				`-ps-0.ns2.svc.tf.training.org:2222"],"worker":["` + testutil.TestTFJobName +
+				`-worker-0.ns2.svc.tf.training.org:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
+		},
+		tc{
+			tfJob:               testutil.NewTFJobWithEvaluatorAndNamespace(1, 1, 1, "ns3"),
+			rt:                  "worker",
+			index:               "0",
+			customClusterDomain: "tf.training.io",
+			expectedClusterSpec: `{"cluster":{"ps":["` + testutil.TestTFJobName +
+				`-ps-0.ns3.svc.tf.training.io:2222"],"worker":["` + testutil.TestTFJobName +
+				`-worker-0.ns3.svc.tf.training.io:2222"]},"task":{"type":"worker","index":0},"environment":"cloud"}`,
 		},
 	}
 	for _, c := range testCase {
+		os.Setenv(EnvCustomClusterDomain, c.customClusterDomain)
 		demoTemplateSpec := c.tfJob.Spec.TFReplicaSpecs[tfv1beta1.TFReplicaTypeWorker].Template
 		if err := setClusterSpec(&demoTemplateSpec, c.tfJob, c.rt, c.index); err != nil {
 			t.Errorf("Failed to set cluster spec: %v", err)
@@ -196,6 +221,16 @@ func TestExitCode(t *testing.T) {
 		},
 	},
 	)
+
+	// Prepare the kube-batch clientset and controller for the test.
+	kubeBatchClientSet := kubebatchclient.NewForConfigOrDie(&rest.Config{
+		Host: "",
+		ContentConfig: rest.ContentConfig{
+			GroupVersion: &v1.SchemeGroupVersion,
+		},
+	},
+	)
+
 	config := &rest.Config{
 		Host: "",
 		ContentConfig: rest.ContentConfig{
@@ -203,7 +238,7 @@ func TestExitCode(t *testing.T) {
 		},
 	}
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-	ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+	ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, kubeBatchClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 	fakePodControl := &controller.FakePodControl{}
 	ctr.PodControl = fakePodControl
 	ctr.tfJobInformerSynced = testutil.AlwaysReady

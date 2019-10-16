@@ -90,7 +90,7 @@ After the cluster is up, the TFJob CRD should be created on the cluster.
 
 ```bash
 # If you are using v1beta1
-kubectl create -f ./examples/crd/crd-v1beta1.yml
+kubectl create -f ./examples/crd/crd-v1beta1.yaml
 ```
 
 Or
@@ -114,7 +114,7 @@ To verify local operator is working, create an example job and you should see jo
 # If you are using v1beta1
 cd ./examples/v1beta1/dist-mnist
 docker build -f Dockerfile -t kubeflow/tf-dist-mnist-test:1.0 .
-kubectl create -f ./tf-job-mnist.yaml
+kubectl create -f ./tf_job_mnist.yaml
 ```
 
 Or
@@ -123,7 +123,7 @@ Or
 # If you are using v1alpha2
 cd ./examples/v1alpha2/dist-mnist
 docker build -f Dockerfile -t kubeflow/tf-dist-mnist-test:1.0 .
-kubectl create -f ./tf-job-mnist.yaml
+kubectl create -f ./tf_job_mnist.yaml
 ```
 
 ## Go version

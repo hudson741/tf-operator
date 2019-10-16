@@ -18,6 +18,7 @@ package tensorflow
 import (
 	"testing"
 
+	kubebatchclient "github.com/kubernetes-sigs/kube-batch/pkg/client/clientset/versioned"
 	"k8s.io/api/core/v1"
 	kubeclientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -26,7 +27,7 @@ import (
 	"github.com/kubeflow/tf-operator/cmd/tf-operator.v1beta1/app/options"
 	tfv1beta1 "github.com/kubeflow/tf-operator/pkg/apis/tensorflow/v1beta1"
 	tfjobclientset "github.com/kubeflow/tf-operator/pkg/client/clientset/versioned"
-	"github.com/kubeflow/tf-operator/pkg/util/testutil"
+	"github.com/kubeflow/tf-operator/pkg/common/util/v1beta1/testutil"
 )
 
 func TestAddService(t *testing.T) {
@@ -38,6 +39,16 @@ func TestAddService(t *testing.T) {
 		},
 	},
 	)
+
+	// Prepare the kube-batch clientset and controller for the test.
+	kubeBatchClientSet := kubebatchclient.NewForConfigOrDie(&rest.Config{
+		Host: "",
+		ContentConfig: rest.ContentConfig{
+			GroupVersion: &v1.SchemeGroupVersion,
+		},
+	},
+	)
+
 	config := &rest.Config{
 		Host: "",
 		ContentConfig: rest.ContentConfig{
@@ -45,7 +56,7 @@ func TestAddService(t *testing.T) {
 		},
 	}
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-	ctr, _, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+	ctr, _, _ := newTFController(config, kubeClientSet, kubeBatchClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 	ctr.tfJobInformerSynced = testutil.AlwaysReady
 	ctr.PodInformerSynced = testutil.AlwaysReady
 	ctr.ServiceInformerSynced = testutil.AlwaysReady

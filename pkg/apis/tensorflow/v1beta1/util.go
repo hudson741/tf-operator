@@ -18,3 +18,13 @@ package v1beta1
 func IsChieforMaster(typ TFReplicaType) bool {
 	return typ == TFReplicaTypeChief || typ == TFReplicaTypeMaster
 }
+
+// IsWorker returns true if the type is Worker.
+func IsWorker(typ TFReplicaType) bool {
+	return typ == TFReplicaTypeWorker
+}
+
+// IsEvaluator returns true if the type is Evaluator.
+func IsEvaluator(typ TFReplicaType) bool {
+	return typ == TFReplicaTypeEval
+}

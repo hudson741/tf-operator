@@ -88,7 +88,8 @@
       // The directory within the kubeflow_testing submodule containing
       // py scripts to use.
       local k8sPy = srcDir;
-      local kubeflowPy = srcRootDir + "/kubeflow/testing/py";
+      local kubeflowPyTesting = srcRootDir + "/kubeflow/testing/py";
+      local kubeflowPyTFJob = srcRootDir + "/kubeflow/tf-operator/py";
 
       local project = params.project;
       // GKE cluster to use
@@ -118,7 +119,7 @@
               {
                 // Add the source directories to the python path.
                 name: "PYTHONPATH",
-                value: k8sPy + ":" + kubeflowPy,
+                value: k8sPy + ":" + kubeflowPyTFJob + ":" +  kubeflowPyTesting,
               },
               {
                 // Set the GOPATH
@@ -167,7 +168,7 @@
             test_name, [
               "python",
               "-m",
-              "py." + std.strReplace(test_name, "-", "_"),
+              "kubeflow.tf_operator." + std.strReplace(test_name, "-", "_"),
               "--cluster=" + cluster,
               "--zone=" + zone,
               "--project=" + project,
@@ -284,6 +285,16 @@
                     template: "invalid-tfjob-tests",
                     dependencies: ["setup-kubeflow"],
                   },
+                  {
+                    name: "replica-restart-policy-tests",
+                    template: "replica-restart-policy-tests",
+                    dependencies: ["setup-kubeflow"],
+                  },
+                  {
+                    name: "pod-names-validation-tests",
+                    template: "pod-names-validation-tests",
+                    dependencies: ["setup-kubeflow"],
+                  },
                 ],  //tasks
               },
             },
@@ -309,7 +320,8 @@
                 ],
                 env: prow_env + [{
                   name: "EXTRA_REPOS",
-                  value: "kubeflow/testing@HEAD",
+                  // TODO(jlewi): Switch back to head once kubeflow/testing#271 is submitted.
+                  value: "kubeflow/testing@HEAD:271",
                 }],
                 image: image,
                 volumeMounts: [
@@ -323,7 +335,7 @@
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTemplate("build", [
               "python",
               "-m",
-              "py.release",
+              "kubeflow.tf_operator.release",
               "build",
               "--src_dir=" + srcDir,
               "--registry=" + params.registry,
@@ -347,7 +359,7 @@
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTemplate("setup-cluster", [
               "python",
               "-m",
-              "py.deploy",
+              "kubeflow.tf_operator.deploy",
               "setup_cluster",
               "--cluster=" + cluster,
               "--zone=" + zone,
@@ -359,7 +371,7 @@
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTemplate("setup-kubeflow", [
               "python",
               "-m",
-              "py.deploy",
+              "kubeflow.tf_operator.deploy",
               "setup_kubeflow",
               "--cluster=" + cluster,
               "--zone=" + zone,
@@ -367,7 +379,6 @@
               "--namespace=" + deployNamespace,
               "--test_app_dir=" + srcDir + "/test/test-app",
               "--image=" + tfJobImage,
-              "--tf_job_version=" + params.tfJobVersion,
               "--junit_path=" + artifactsDir + "/junit_setupkubeflow.xml",
             ]),  // setup cluster
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTestTemplate(
@@ -382,6 +393,10 @@
               "distributed-training-tests"),
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTestTemplate(
               "invalid-tfjob-tests"),
+            $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTestTemplate(
+              "replica-restart-policy-tests"),
+            $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTestTemplate(
+              "pod-names-validation-tests"),
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTemplate("create-pr-symlink", [
               "python",
               "-m",
@@ -393,7 +408,7 @@
             $.parts(namespace, name, overrides).e2e(prow_env, bucket).buildTemplate("teardown-cluster", [
               "python",
               "-m",
-              "py.deploy",
+              "kubeflow.tf_operator.deploy",
               "teardown",
               "--cluster=" + cluster,
               "--zone=" + zone,

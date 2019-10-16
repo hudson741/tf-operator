@@ -28,7 +28,7 @@ import (
 	common "github.com/kubeflow/tf-operator/pkg/apis/common/v1beta1"
 	tfv1beta1 "github.com/kubeflow/tf-operator/pkg/apis/tensorflow/v1beta1"
 	tfjobclientset "github.com/kubeflow/tf-operator/pkg/client/clientset/versioned"
-	"github.com/kubeflow/tf-operator/pkg/common/util/testutil"
+	"github.com/kubeflow/tf-operator/pkg/common/util/v1beta1/testutil"
 	"github.com/kubeflow/tf-operator/pkg/control"
 )
 
@@ -48,7 +48,7 @@ func TestAddTFJob(t *testing.T) {
 		},
 	}
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-	ctr, _, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+	ctr, _, _ := newTFController(config, kubeClientSet, nil, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 	ctr.tfJobInformerSynced = testutil.AlwaysReady
 	ctr.PodInformerSynced = testutil.AlwaysReady
 	ctr.ServiceInformerSynced = testutil.AlwaysReady
@@ -107,7 +107,7 @@ func TestCopyLabelsAndAnnotation(t *testing.T) {
 		},
 	}
 	tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-	ctr, _, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+	ctr, _, _ := newTFController(config, kubeClientSet, nil, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 	fakePodControl := &controller.FakePodControl{}
 	ctr.PodControl = fakePodControl
 	ctr.tfJobInformerSynced = testutil.AlwaysReady
@@ -286,7 +286,7 @@ func TestDeletePodsAndServices(t *testing.T) {
 			},
 		}
 		tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-		ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+		ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, nil, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 		fakePodControl := &controller.FakePodControl{}
 		ctr.PodControl = fakePodControl
 		fakeServiceControl := &control.FakeServiceControl{}
@@ -440,7 +440,7 @@ func TestCleanupTFJob(t *testing.T) {
 			},
 		}
 		tfJobClientSet := tfjobclientset.NewForConfigOrDie(config)
-		ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
+		ctr, kubeInformerFactory, _ := newTFController(config, kubeClientSet, nil, tfJobClientSet, controller.NoResyncPeriodFunc, options.ServerOption{})
 		fakePodControl := &controller.FakePodControl{}
 		ctr.PodControl = fakePodControl
 		fakeServiceControl := &control.FakeServiceControl{}
