@@ -47,6 +47,43 @@ const (
 	podTemplateSchedulerNameReason = "SettedPodTemplateSchedulerName"
 )
 
+//置换tfjob内的volums,为后期读取minio进行分区
+func setPodVMSpec(podTemplateSpec *v1.PodTemplateSpec, tfjob *tfv1.TFJob, rt, index string) {
+	logger := tflogger.LoggerForReplica(tfjob, rt)
+	defer func(){
+		if err :=recover(); err!=nil{
+			logger.Error("setPodVMSpec has error with ",err)
+		}
+	}()
+	isReplaceVMSpec := false
+	for i, container := range podTemplateSpec.Spec.Containers {
+		logger.Info("setPodVMSpec  has container ", container.Name)
+		if container.Name == tfv1.DefaultContainerName {
+			for _, env := range container.Env {
+				if env.Name == "isReplaceVMSpec" {
+					if env.Value == "true" {
+						isReplaceVMSpec = true
+					}
+				}
+			}
+			logger.Info("setPodVMSpec  with isReplaceVMSpec ", isReplaceVMSpec)
+			if !isReplaceVMSpec{
+				return
+			}
+
+			if container.VolumeMounts == nil{
+				break
+			}
+
+			for j := range container.VolumeMounts {
+				podTemplateSpec.Spec.Containers[i].VolumeMounts[j].SubPath = strings.ReplaceAll(podTemplateSpec.Spec.Containers[i].VolumeMounts[j].SubPath, "((index))", index)
+				logger.Info("setPodVMSpec ", container.Name, " replace volumeMounts subpath with", podTemplateSpec.Spec.Containers[i].VolumeMounts[j].String())
+			}
+		}
+	}
+
+}
+
 // reconcilePods checks and updates pods for each given TFReplicaSpec.
 // It will requeue the tfjob in case of an error while creating/deleting pods.
 func (tc *TFController) reconcilePods(
@@ -199,6 +236,9 @@ func (tc *TFController) createNewPod(tfjob *tfv1.TFJob, rt, index string, spec *
 		podTemplate.Annotations[gangSchedulingPodGroupAnnotation] =
 			jobcontroller.GenPodGroupName(tfjob.Name)
 	}
+
+	//外加设置pod内subpath替换
+	setPodVMSpec(podTemplate, tfjob, rt, index)
 
 	err = tc.PodControl.CreatePodsWithControllerRef(tfjob.Namespace, podTemplate, tfjob, controllerRef)
 	if err != nil && errors.IsTimeout(err) {

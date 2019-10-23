@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
+	// "github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha1"
+	"github.com/kubernetes-sigs/kube-batch/pkg/apis/scheduling/v1alpha2"
 	kubebatchclient "github.com/kubernetes-sigs/kube-batch/pkg/client/clientset/versioned"
 	log "github.com/sirupsen/logrus"
+
 	v1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -221,30 +223,30 @@ func (jc *JobController) GenLabels(jobName string) map[string]string {
 	}
 }
 
-func (jc *JobController) SyncPodGroup(job metav1.Object, minAvailableReplicas int32) (*v1alpha1.PodGroup, error) {
+func (jc *JobController) SyncPodGroup(job metav1.Object, minAvailableReplicas int32) (*v1alpha2.PodGroup, error) {
 
 	kubeBatchClientInterface := jc.KubeBatchClientSet
 	// Check whether podGroup exists or not
 	podGroupName := GenPodGroupName(job.GetName())
-	podGroup, err := kubeBatchClientInterface.SchedulingV1alpha1().PodGroups(job.GetNamespace()).Get(podGroupName, metav1.GetOptions{})
+	podGroup, err := kubeBatchClientInterface.SchedulingV1alpha2().PodGroups(job.GetNamespace()).Get(podGroupName, metav1.GetOptions{})
 	if err == nil {
 		return podGroup, nil
 	}
 
 	// create podGroup for gang scheduling by kube-batch
 	minAvailable := intstr.FromInt(int(minAvailableReplicas))
-	createPodGroup := &v1alpha1.PodGroup{
+	createPodGroup := &v1alpha2.PodGroup{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podGroupName,
 			OwnerReferences: []metav1.OwnerReference{
 				*jc.GenOwnerReference(job),
 			},
 		},
-		Spec: v1alpha1.PodGroupSpec{
+		Spec: v1alpha2.PodGroupSpec{
 			MinMember: minAvailable.IntVal,
 		},
 	}
-	return kubeBatchClientInterface.SchedulingV1alpha1().PodGroups(job.GetNamespace()).Create(createPodGroup)
+	return kubeBatchClientInterface.SchedulingV1alpha2().PodGroups(job.GetNamespace()).Create(createPodGroup)
 }
 
 func (jc *JobController) DeletePodGroup(object runtime.Object) error {
@@ -256,7 +258,7 @@ func (jc *JobController) DeletePodGroup(object runtime.Object) error {
 	}
 
 	//check whether podGroup exists or not
-	_, err = kubeBatchClientInterface.SchedulingV1alpha1().PodGroups(accessor.GetNamespace()).Get(accessor.GetName(), metav1.GetOptions{})
+	_, err = kubeBatchClientInterface.SchedulingV1alpha2().PodGroups(accessor.GetNamespace()).Get(accessor.GetName(), metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			return nil
@@ -267,7 +269,7 @@ func (jc *JobController) DeletePodGroup(object runtime.Object) error {
 	log.Infof("Deleting PodGroup %s", accessor.GetName())
 
 	//delete podGroup
-	err = kubeBatchClientInterface.SchedulingV1alpha1().PodGroups(accessor.GetNamespace()).Delete(accessor.GetName(), &metav1.DeleteOptions{})
+	err = kubeBatchClientInterface.SchedulingV1alpha2().PodGroups(accessor.GetNamespace()).Delete(accessor.GetName(), &metav1.DeleteOptions{})
 	if err != nil {
 		jc.Recorder.Eventf(object, v1.EventTypeWarning, "FailedDeletePodGroup", "Error deleting: %v", err)
 		return fmt.Errorf("unable to delete PodGroup: %v", err)

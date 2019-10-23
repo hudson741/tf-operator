@@ -4,6 +4,17 @@
 [![Coverage Status](https://coveralls.io/repos/github/kubeflow/tf-operator/badge.svg?branch=master)](https://coveralls.io/github/kubeflow/tf-operator?branch=master)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubeflow/tf-operator)](https://goreportcard.com/report/github.com/kubeflow/tf-operator)
 
+
+## 二次开发记录
+
+* 更改tf-operator对kube-batch的依赖为0.1 改成0.2
+
+* 增加tfjob的ttl时间，如果目标资源没有设置ttl，则给与设置ttl时间10分钟
+
+* 实现对tfjob对分片索引，mount子路径自动发现
+
+
+
 ## Quick Links
 
 * [Prow test dashboard](https://k8s-testgrid.appspot.com/sig-big-data)

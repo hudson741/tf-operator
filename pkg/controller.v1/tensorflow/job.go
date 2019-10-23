@@ -2,6 +2,7 @@ package tensorflow
 
 import (
 	"fmt"
+	"github.com/kubeflow/tf-operator/pkg/util"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -21,6 +22,8 @@ import (
 
 const (
 	failedMarshalTFJobReason = "InvalidTFJobSpec"
+	ttlSecondsAfterFinished  = "ttlSecondsAfterFinished"
+	ttlSecondsAfterFinishedDebug = "ttlSecondsAfterFinishedDebug"
 )
 
 var (
@@ -155,7 +158,8 @@ func (tc *TFController) deletePodsAndServices(tfJob *tfv1.TFJob, pods []*v1.Pod)
 	}
 
 	// Delete nothing when the cleanPodPolicy is None.
-	if *tfJob.Spec.CleanPodPolicy == common.CleanPodPolicyNone {
+	//组件debug设置为true时CleanPodPolicy为CleanPodPolicyNone || 有失败情况 ===》 不给与删除,此时，完全交给TTL设置删除
+	if *tfJob.Spec.CleanPodPolicy == common.CleanPodPolicyNone || isFailed(tfJob.Status) {
 		return nil
 	}
 
@@ -178,8 +182,23 @@ func (tc *TFController) cleanupTFJob(tfJob *tfv1.TFJob) error {
 	currentTime := time.Now()
 	ttl := tfJob.Spec.TTLSecondsAfterFinished
 	if ttl == nil {
-		// do nothing if the cleanup delay is not set
-		return nil
+		// return nil
+		//此处修改，如果没设置ttl时间，赋予15分钟
+		/**
+			if (debug==false && tfjob完全成功){
+					常规删除tfjob
+		     }else{
+					 延期删除tfjob
+		     }
+		**/
+		if *tfJob.Spec.CleanPodPolicy == common.CleanPodPolicyAll &&
+			!isFailed(tfJob.Status){
+			ttlSecondsAfterFinished := util.GetenvInt32(ttlSecondsAfterFinished,900)
+			ttl = &ttlSecondsAfterFinished
+		}else{
+			ttlSecondsAfterFinished := util.GetenvInt32(ttlSecondsAfterFinishedDebug,604800)
+			ttl = &ttlSecondsAfterFinished
+		}
 	}
 	duration := time.Second * time.Duration(*ttl)
 	if currentTime.After(tfJob.Status.CompletionTime.Add(duration)) {

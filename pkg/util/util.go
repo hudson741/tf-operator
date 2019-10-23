@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
+	"strconv"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -72,4 +74,33 @@ func RandString(n int) string {
 	}
 
 	return string(b)
+}
+
+func Getenv(key string,defaultValue string) string{
+	value := os.Getenv(key)
+	if value == ""{
+		return defaultValue
+	}
+	return value
+}
+
+func GetenvInt32(key string,defaultValue int32) int32 {
+	value :=os.Getenv(key)
+	if value == ""{
+		return defaultValue
+	}
+	i32,err := strconv.ParseInt(value,10,32)
+	if err!=nil{
+		return defaultValue
+	}
+	return int32(i32)
+
+}
+
+func GetenvBool(key string) bool{
+	value := os.Getenv(key)
+	if value == "1" || value == "true" {
+		return true
+	}
+	return false
 }
